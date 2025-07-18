@@ -3,7 +3,7 @@ pandas
 numpy
 Jinja2==3.0.3
 captum
-sklearn
+scikit-learn
 transformers==4.38.0
 shap
 torch

@@ -80,7 +80,8 @@ class GemmaSelfIE:
                   to_interpret_text:str,
                   layers_to_interpret = [8,10,12],
                   layers_interpreter = [3,4],
-                  token_index = -2):
+                  token_index = -2,
+                  interpretation_prefix='interpretation'):
         
         interpretations = []
         layers = self.layers
@@ -155,7 +156,7 @@ class GemmaSelfIE:
                         break
                 # Decode the generated tokens
                 interpretation = self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
-                interpret_dict[f'{l}.{k}'] = interpretation
+                interpret_dict[f'{interpretation_prefix}_{l}.{k}'] = interpretation
                 # interpretations.append(interpret_dict)
         return(interpret_dict)
         # return(interpretations)

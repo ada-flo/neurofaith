@@ -6,7 +6,8 @@ import torch.nn.functional as F
 import pandas as pd
 from interpret.selfie import GemmaSelfIE
 from collections import defaultdict
-
+from openai import OpenAI
+import traceback
 
 class neurofaith:
     def __init__(self, model, tokenizer, device, stop_words=None):
@@ -47,13 +48,19 @@ class neurofaith:
                temperature:float=0.05) -> list[str]:
         
         answers=[]
+        preprompt_example_1 = "The country of the origin of the movie maker that directed the movie Persona is"
+        preprompt_example_2 = "The capital city of the country where Emmanuel Macron is the president is"
         
         #for all texts to answer
         for text in tqdm(texts):
             
             #preprocessing
             messages = [
-            {"role": "user", "content": preprompt + "\n" + text + "\n**Answer:**"},
+                {"role": "user", "content": preprompt + "\n" + preprompt_example_1 + "\n**Answer:**"},
+                {"role": "assistant" ,"content": f"""**Sweden**"""},
+                {"role": "user", "content": preprompt + "\n" + preprompt_example_2 + "\n**Answer:**"},
+                {"role": "assistant" ,"content": f"""**Paris**"""},
+                {"role": "user", "content": preprompt + "\n" + text + "\n**Answer:**"},
             ]
 
             if answer_prefix!=None:
@@ -210,8 +217,7 @@ class neurofaith:
         return(result)
     
     def retrieve_bridge_object(self,
-               retriever_model,
-               retriever_tokenizer,
+               retriever_model: str,  # e.g., "Qwen3-32B-Instruct"
                texts:list[str],
                e1_labels:list[str],
                e3_answers:list[str],
@@ -219,45 +225,46 @@ class neurofaith:
                max_new_tokens:int=10,
                temperature:float=0.05) -> list[str]:
         
-        preprompt_example_1 = "**Paris** to **Emmanuel Macron** in the following text? Answer briefly\n**Text**: 'Emmanue Macron is the president of France, and the capital city of France is Paris.'\n**Logical link entity:**"
+        preprompt_example_1 = "**Paris** to **Emmanuel Macron** in the following text? Answer briefly\n**Text**: 'Emmanuel Macron is the president of France, and the capital city of France is Paris.'\n**Logical link entity:**"
         preprompt_example_2 = "**Sweden** to **the movie Persona** in the following text? Answer briefly\n**Text**: 'The movie Persona has been directed from Ingmar Bergman, who is from Sweden.'\n**Logical link entity:**"
-
         
         bridge_objects=[]
+
+        openai_client = OpenAI(base_url="http://localhost:8000/v1", api_key="EMPTY")
 
         #for all texts to answer
         for i in tqdm(range(len(texts))):
             
             #preprocessing
             messages = [
-            {"role": "user", "content": preprompt + preprompt_example_1},
-            {"role": "assistant" ,"content": f"""**France**|im_end|"""},
-            {"role": "user", "content": preprompt + preprompt_example_2},
-            {"role": "assistant" ,"content": f"""**Ingmar Bergman**|im_end|"""},
-            {"role": "user", "content": preprompt + "**"+ e1_labels.iloc[i] + "** to **" + e3_answers.iloc[i] + "** in the following text? Answer briefly\n **Text**: " + "'"+ texts.iloc[i] + "'\n**Logical link entity:**"},
+                {"role": "user", "content": preprompt + preprompt_example_1},
+                {"role": "assistant" ,"content": f"""**France**|im_end|"""},
+                {"role": "user", "content": preprompt + preprompt_example_2},
+                {"role": "assistant" ,"content": f"""**Ingmar Bergman**|im_end|"""},
+                {"role": "user", "content": preprompt + "**"+ e1_labels.iloc[i] + "** to **" + e3_answers.iloc[i] + "** in the following text? Answer briefly\n **Text**: " + "'"+ texts.iloc[i] + "'\n**Logical link entity:**"},
             ]
 
-            encoded_input = retriever_tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, enable_thinking=False, return_tensors="pt")
-            encoded_input = retriever_tokenizer([encoded_input], return_tensors="pt").to(retriever_model.device)
-
-            #answering
-            with torch.no_grad():
-                outputs = retriever_model.generate(
-                    **encoded_input,
-                    max_new_tokens=max_new_tokens,
-                    do_sample=True,
+            try:
+                response = openai_client.chat.completions.create(
+                    model=retriever_model,
+                    messages=messages,
                     temperature=temperature,
-                    top_p=0.9,
-                    repetition_penalty=1.2
+                    max_tokens=max_new_tokens,
+                    extra_body={
+                        "chat_template_kwargs": {"enable_thinking": False},
+                    },
+                    stop=["|im_end|"]
                 )
-            
-            #decoding the answer
-            output_ids = outputs[0][len(encoded_input.input_ids[0]):].tolist()
-            bridge_object = retriever_tokenizer.decode(output_ids)
-            bridge_objects.append(bridge_object)
-            # print(bridge_object)
+                response_text = response.choices[0].message.content.strip()
+                bridge_entity = response_text.split("|im_end|")[0].strip()
+                bridge_objects.append(bridge_entity)
+
+            except Exception as e:
+                print(f"❌ Error at index {i}: {e}")
+                traceback.print_exc()
+                bridge_objects.append("")
         
-        return(bridge_objects)
+        return bridge_objects
     
     def compute_faithfulness(self,
                         data:pd.DataFrame,
