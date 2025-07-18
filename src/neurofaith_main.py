@@ -1,6 +1,7 @@
 from tqdm import tqdm
 import torch
 import torch.nn as nn
+from fuzzywuzzy import fuzz
 import torch.optim as optim
 import torch.nn.functional as F
 import pandas as pd
@@ -216,8 +217,126 @@ class neurofaith:
 
         return(result)
     
-    def retrieve_bridge_object(self,
-               retriever_model: str,  # e.g., "Qwen3-32B-Instruct"
+    
+def compute_characterization(data:pd.DataFrame,
+                        prediction_status:str="prediction_status",
+                        explanation_status:str="explanation_status",
+                        interpretation_status:str="interpretation_status",
+                        faithful_NLE:str="faithful_NLE",
+                        prefix=""):
+    
+    #Reliable orcale category
+    data[f"{prefix}reliable_oracle"] = 0
+    data.loc[(data[prediction_status]==True) & (data[faithful_NLE]==True) & (data[explanation_status]==True), f"{prefix}reliable_oracle"] = 1
+    #Biased category
+    data[f"{prefix}biased"] = 0
+    data.loc[(data[prediction_status]==True) & (data[faithful_NLE]==True) & (data[explanation_status]==False), f"{prefix}biased"] = 1
+    #Explainable parrot category
+    data[f"{prefix}explainer_parrot"] = 0
+    data.loc[(data[prediction_status]==True) & (data[faithful_NLE]==False) & (data[explanation_status]==True), f"{prefix}explainer_parrot"] = 1
+    #Deceptive category
+    data[f"{prefix}deceptive"] = 0
+    data.loc[(data[prediction_status]==True) & (data[faithful_NLE]==False) & (data[explanation_status]==False) & (data[interpretation_status]==True), f"{prefix}deceptive"] = 1
+    #Shortcut learning category
+    data[f"{prefix}shortcut_learning"] = 0
+    data.loc[(data[prediction_status]==True) & (data[faithful_NLE]==False) & (data[explanation_status]==False) & (data[interpretation_status]==False), f"{prefix}shortcut_learning"] = 1
+    #Prediction accurate category
+    data[f"{prefix}prediction_accurate_category"] = ''
+    data.loc[(data[f"{prefix}reliable_oracle"]==1), f"{prefix}prediction_accurate_category"] = 'reliable_oracle'
+    data.loc[(data[f"{prefix}biased"]==1), f"{prefix}prediction_accurate_category"] = 'biased'
+    data.loc[(data[f"{prefix}explainer_parrot"]==1), f"{prefix}prediction_accurate_category"] = 'explainer_parrot'
+    data.loc[(data[f"{prefix}deceptive"]==1), f"{prefix}prediction_accurate_category"] = 'deceptive'
+    data.loc[(data[f"{prefix}shortcut_learning"]==1), f"{prefix}prediction_accurate_category"] = 'shortcut_learning'
+
+    #Parametric Knowledge false e2 -> e3 category
+    data[f"{prefix}PK_false_23"] = 0
+    data.loc[(data[prediction_status]==False) & (data[faithful_NLE]==True) & (data[explanation_status]==True), f"{prefix}PK_false_23"] = 1
+    #Parametric Knowledge false e1 -> e2 category
+    data[f"{prefix}PK_false_12"] = 0
+    data.loc[(data[prediction_status]==False) & (data[faithful_NLE]==True) & (data[explanation_status]==False), f"{prefix}PK_false_12"] = 1
+    #Parrot e1 -> e2 Parrot category
+    data[f"{prefix}parrot_12"] = 0
+    data.loc[(data[prediction_status]==False) & (data[faithful_NLE]==False) & (data[explanation_status]==True), f"{prefix}parrot_12"] = 1
+    #Deceptive False (PK false e2 -> e3 unlikely)
+    data[f"{prefix}deceptive_false"] = 0
+    data.loc[(data[prediction_status]==False) & (data[faithful_NLE]==False) & (data[explanation_status]==False) & (data[interpretation_status]==True), f"{prefix}deceptive_false"] = 1
+    #Parametric Knowledge false e1 -> e2 unlikely
+    data[f"{prefix}PK_false_12_unlikely"] = 0
+    data.loc[(data[prediction_status]==False) & (data[faithful_NLE]==False) & (data[explanation_status]==False) & (data[interpretation_status]==False), f"{prefix}PK_false_12_unlikely"] = 1
+    #Prediction non accurate category
+    data[f"{prefix}prediction_non_accurate_category"] = ''
+    data.loc[(data[f"{prefix}PK_false_23"]==1), f"{prefix}prediction_non_accurate_category"] = 'PK_false_23'
+    data.loc[(data[f"{prefix}PK_false_12"]==1), f"{prefix}prediction_non_accurate_category"] = 'PK_false_12'
+    data.loc[(data[f"{prefix}parrot_12"]==1), f"{prefix}prediction_non_accurate_category"] = 'parrot_12'
+    data.loc[(data[f"{prefix}deceptive_false"]==1), f"{prefix}prediction_non_accurate_category"] = 'deceptive_false'
+    data.loc[(data[f"{prefix}PK_false_12_unlikely"]==1), f"{prefix}prediction_non_accurate_category"] = 'PK_false_12_unlikely'
+
+    return(data)
+
+def compute_characterization_eval(data:pd.DataFrame,
+                        prediction_status:str="prediction_status",
+                        explanation_status:str="explanation_status",
+                        interpretation_status:str="interpretation_status",
+                        faithful_NLE:str="faithful_NLE",
+                        prefix=""):
+    
+    #Reliable orcale category
+    data[f"{prefix}reliable_oracle"] = 0
+    data.loc[(data[prediction_status]==True) & (data[faithful_NLE]==True) & (data[explanation_status]==True), f"{prefix}reliable_oracle"] = 1
+    #Biased category
+    data[f"{prefix}biased"] = 0
+    data.loc[(data[prediction_status]==True) & (data[faithful_NLE]==True) & (data[explanation_status]==False), f"{prefix}biased"] = 1
+    #Explainable parrot category
+    data[f"{prefix}explainer_parrot"] = 0
+    data.loc[(data[prediction_status]==True) & (data[faithful_NLE]==False) & (data[explanation_status]==True), f"{prefix}explainer_parrot"] = 1
+    #Shortcut learning or Deceptive category
+    data[f"{prefix}shortcut_deceptive"] = 0
+    data.loc[(data[prediction_status]==True) & (data[faithful_NLE]==False) & (data[explanation_status]==False), f"{prefix}shortcut_deceptive"] = 1
+    #Prediction accurate category
+    data[f"{prefix}prediction_accurate_category"] = ''
+    data.loc[(data[f"{prefix}reliable_oracle"]==1), f"{prefix}prediction_accurate_category"] = f'reliable_oracle'
+    data.loc[(data[f"{prefix}biased"]==1), f"{prefix}prediction_accurate_category"] = f'biased'
+    data.loc[(data[f"{prefix}explainer_parrot"]==1), f"{prefix}prediction_accurate_category"] = f'explainer_parrot'
+    data.loc[(data[f"{prefix}shortcut_deceptive"]==1), f"{prefix}prediction_accurate_category"] = f'shortcut_deceptive'
+
+    #Parametric Knowledge false e2 -> e3 category
+    data[f"{prefix}PK_false_23"] = 0
+    data.loc[(data[prediction_status]==False) & (data[faithful_NLE]==True) & (data[explanation_status]==True), f"{prefix}PK_false_23"] = 1
+    #Parametric Knowledge false e1 -> e2 category
+    data[f"{prefix}PK_false_12"] = 0
+    data.loc[(data[prediction_status]==False) & (data[faithful_NLE]==True) & (data[explanation_status]==False), f"{prefix}PK_false_12"] = 1
+    #Parrot e1 -> e2 Parrot category
+    data[f"{prefix}parrot_12"] = 0
+    data.loc[(data[prediction_status]==False) & (data[faithful_NLE]==False) & (data[explanation_status]==True), f"{prefix}parrot_12"] = 1
+    #Parametric Knowledge false e1 -> e2 unlikely or Deceptive False (PK false e2 -> e3 unlikely)
+    data[f"{prefix}error_deceptive"] = 0
+    data.loc[(data[prediction_status]==False) & (data[faithful_NLE]==False) & (data[explanation_status]==False), f"{prefix}error_deceptive"] = 1
+    #Prediction non accurate category
+    data[f"{prefix}prediction_non_accurate_category"] = ''
+    data.loc[(data[f"{prefix}PK_false_23"]==1), f"{prefix}prediction_non_accurate_category"] = f'{prefix}PK_false_23'
+    data.loc[(data[f"{prefix}PK_false_12"]==1), f"{prefix}prediction_non_accurate_category"] = f'{prefix}PK_false_12'
+    data.loc[(data[f"{prefix}parrot_12"]==1), f"{prefix}prediction_non_accurate_category"] = f'{prefix}parrot_12'
+    data.loc[(data[f"{prefix}error_deceptive"]==1), f"{prefix}prediction_non_accurate_category"] = f'{prefix}error_deceptive'
+
+    return(data)
+
+def compute_faithfulness(data:pd.DataFrame,
+                        predicted_bridge_objects_column:str,
+                        col_interpretation:list[str],
+                        threshold = 70) -> list:
+    
+        #init_interpretation_status
+        faithful_NLE = pd.Series([False]*(data.shape[0]))
+        for c in col_interpretation:
+            # Compute the interpretation status, if bridge object in the interpretation
+            results = [bridge_object in interpretation for bridge_object, interpretation in zip(data[predicted_bridge_objects_column].fillna(""), data[c].fillna(""))]
+            results_fuzzy = [(fuzz.partial_ratio(bridge_object, interpretation)>threshold) for bridge_object, interpretation in zip(data[predicted_bridge_objects_column].fillna(""), data[c].fillna(""))]
+            faithful_NLE = pd.Series(faithful_NLE) | pd.Series(results) | pd.Series(results_fuzzy)
+
+        return(faithful_NLE)
+
+
+def retrieve_bridge_object(retriever_model: str,  # e.g., "Qwen3-32B-Instruct"
                texts:list[str],
                e1_labels:list[str],
                e3_answers:list[str],
@@ -264,121 +383,5 @@ class neurofaith:
                 traceback.print_exc()
                 bridge_objects.append("")
         
-        return bridge_objects
-    
-    def compute_faithfulness(self,
-                        data:pd.DataFrame,
-                        predicted_bridge_objects_column:str,
-                        col_interpretation:list[str]) -> list:
-    
-        #init_interpretation_status
-        faithful_NLE = pd.Series([False]*(data.shape[0]))
-        for c in col_interpretation:
-            # Compute the interpretation status, if bridge object in the interpretation
-            results = [bridge_object in interpretation for bridge_object, interpretation in zip(data[predicted_bridge_objects_column].fillna(" "), data[c].fillna(" "))]
-            faithful_NLE = pd.Series(faithful_NLE) | pd.Series(results) 
-
-        return(faithful_NLE)
-    
-    def compute_characterization(self,
-                            data:pd.DataFrame,
-                            prediction_status:str="prediction_status",
-                            explanation_status:str="explanation_status",
-                            interpretation_status:str="interpretation_status",
-                            faithful_NLE:str="faithful_NLE"):
-        
-        #Reliable orcale category
-        data["reliable_oracle"] = 0
-        data.loc[(data[prediction_status]==True) & (data[faithful_NLE]==True) & (data[explanation_status]==True), "reliable_oracle"] = 1
-        #Biased category
-        data["biased"] = 0
-        data.loc[(data[prediction_status]==True) & (data[faithful_NLE]==True) & (data[explanation_status]==False), "biased"] = 1
-        #Explainable parrot category
-        data["explainer_parrot"] = 0
-        data.loc[(data[prediction_status]==True) & (data[faithful_NLE]==False) & (data[explanation_status]==True), "explainer_parrot"] = 1
-        #Deceptive category
-        data["deceptive"] = 0
-        data.loc[(data[prediction_status]==True) & (data[faithful_NLE]==False) & (data[explanation_status]==False) & (data[interpretation_status]==True), "deceptive"] = 1
-        #Shortcut learning category
-        data["shortcut_learning"] = 0
-        data.loc[(data[prediction_status]==True) & (data[faithful_NLE]==False) & (data[explanation_status]==False) & (data[interpretation_status]==False), "shortcut_learning"] = 1
-        #Prediction accurate category
-        data["prediction_accurate_category"] = ''
-        data.loc[(data["reliable_oracle"]==1), "prediction_accurate_category"] = 'reliable_oracle'
-        data.loc[(data["biased"]==1), "prediction_accurate_category"] = 'biased'
-        data.loc[(data["explainer_parrot"]==1), "prediction_accurate_category"] = 'explainer_parrot'
-        data.loc[(data["deceptive"]==1), "prediction_accurate_category"] = 'deceptive'
-        data.loc[(data["shortcut_learning"]==1), "prediction_accurate_category"] = 'shortcut_learning'
-
-        #Parametric Knowledge false e2 -> e3 category
-        data["PK_false_23"] = 0
-        data.loc[(data[prediction_status]==False) & (data[faithful_NLE]==True) & (data[explanation_status]==True), "PK_false_23"] = 1
-        #Parametric Knowledge false e1 -> e2 category
-        data["PK_false_12"] = 0
-        data.loc[(data[prediction_status]==False) & (data[faithful_NLE]==True) & (data[explanation_status]==False), "PK_false_12"] = 1
-        #Parrot e1 -> e2 Parrot category
-        data["parrot_12"] = 0
-        data.loc[(data[prediction_status]==False) & (data[faithful_NLE]==False) & (data[explanation_status]==True), "parrot_12"] = 1
-        #Deceptive False (PK false e2 -> e3 unlikely)
-        data["deceptive_false"] = 0
-        data.loc[(data[prediction_status]==False) & (data[faithful_NLE]==False) & (data[explanation_status]==False) & (data[interpretation_status]==True), "deceptive_false"] = 1
-        #Parametric Knowledge false e1 -> e2 unlikely
-        data["PK_false_12_unlikely"] = 0
-        data.loc[(data[prediction_status]==False) & (data[faithful_NLE]==False) & (data[explanation_status]==False) & (data[interpretation_status]==False), "PK_false_12_unlikely"] = 1
-        #Prediction non accurate category
-        data["prediction_non_accurate_category"] = ''
-        data.loc[(data["PK_false_23"]==1), "prediction_non_accurate_category"] = 'PK_false_23'
-        data.loc[(data["PK_false_12"]==1), "prediction_non_accurate_category"] = 'PK_false_12'
-        data.loc[(data["parrot_12"]==1), "prediction_non_accurate_category"] = 'parrot_12'
-        data.loc[(data["deceptive_false"]==1), "prediction_non_accurate_category"] = 'deceptive_false'
-        data.loc[(data["PK_false_12_unlikely"]==1), "prediction_non_accurate_category"] = 'PK_false_12_unlikely'
-
-        return(data)
-    
-    def compute_characterization_eval(self,
-                            data:pd.DataFrame,
-                            prediction_status:str="prediction_status",
-                            explanation_status:str="explanation_status",
-                            interpretation_status:str="interpretation_status",
-                            faithful_NLE:str="faithful_NLE"):
-        
-        #Reliable orcale category
-        data["reliable_oracle"] = 0
-        data.loc[(data[prediction_status]==True) & (data[faithful_NLE]==True) & (data[explanation_status]==True), "reliable_oracle"] = 1
-        #Biased category
-        data["biased"] = 0
-        data.loc[(data[prediction_status]==True) & (data[faithful_NLE]==True) & (data[explanation_status]==False), "biased"] = 1
-        #Explainable parrot category
-        data["explainer_parrot"] = 0
-        data.loc[(data[prediction_status]==True) & (data[faithful_NLE]==False) & (data[explanation_status]==True), "explainer_parrot"] = 1
-        #Shortcut learning or Deceptive category
-        data["shortcut_deceptive"] = 0
-        data.loc[(data[prediction_status]==True) & (data[faithful_NLE]==False) & (data[explanation_status]==False), "shortcut_deceptive"] = 1
-        #Prediction accurate category
-        data["prediction_accurate_category"] = ''
-        data.loc[(data["reliable_oracle"]==1), "prediction_accurate_category"] = 'reliable_oracle'
-        data.loc[(data["biased"]==1), "prediction_accurate_category"] = 'biased'
-        data.loc[(data["explainer_parrot"]==1), "prediction_accurate_category"] = 'explainer_parrot'
-        data.loc[(data["shortcut_deceptive"]==1), "prediction_accurate_category"] = 'shortcut_deceptive'
-
-        #Parametric Knowledge false e2 -> e3 category
-        data["PK_false_23"] = 0
-        data.loc[(data[prediction_status]==False) & (data[faithful_NLE]==True) & (data[explanation_status]==True), "PK_false_23"] = 1
-        #Parametric Knowledge false e1 -> e2 category
-        data["PK_false_12"] = 0
-        data.loc[(data[prediction_status]==False) & (data[faithful_NLE]==True) & (data[explanation_status]==False), "PK_false_12"] = 1
-        #Parrot e1 -> e2 Parrot category
-        data["parrot_12"] = 0
-        data.loc[(data[prediction_status]==False) & (data[faithful_NLE]==False) & (data[explanation_status]==True), "parrot_12"] = 1
-        #Parametric Knowledge false e1 -> e2 unlikely or Deceptive False (PK false e2 -> e3 unlikely)
-        data["error_deceptive"] = 0
-        data.loc[(data[prediction_status]==False) & (data[faithful_NLE]==False) & (data[explanation_status]==False), "error_deceptive"] = 1
-        #Prediction non accurate category
-        data["prediction_non_accurate_category"] = ''
-        data.loc[(data["PK_false_23"]==1), "prediction_non_accurate_category"] = 'PK_false_23'
-        data.loc[(data["PK_false_12"]==1), "prediction_non_accurate_category"] = 'PK_false_12'
-        data.loc[(data["parrot_12"]==1), "prediction_non_accurate_category"] = 'parrot_12'
-        data.loc[(data["error_deceptive"]==1), "prediction_non_accurate_category"] = 'error_deceptive'
-
-        return(data)
+        return(bridge_objects)
 
